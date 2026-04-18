@@ -6,43 +6,48 @@ namespace SmartFaq.Api.Services;
 public class QuestionService : IQuestionService
 {
     private readonly List<FaqSection> _sections;
+    private readonly EmbeddingService _embeddingService;
 
-    public QuestionService(DatasetLoader loader)
+    public QuestionService(DatasetLoader loader, EmbeddingService embeddingService)
     {
+        _embeddingService = embeddingService;
+
         _sections = loader.Load("Data/faq.txt");
-    }
-    
-    public string GetContext(string question)
-    {
-        var lowerQuestion = question.ToLower();
-    
-        var age = ExtractAge(lowerQuestion);
 
+        // Precompute embeddings (MOCK)
+        foreach (var section in _sections)
+        {
+            section.Embedding = _embeddingService
+                .GetEmbedding(section.Content)
+                .Result;
+        }
+    }
+
+    public async Task<string> GetContext(string question)
+    {
+        var age = ExtractAge(question);
+
+        // 1. Filter by metadata (age)
         var filteredSections = _sections
             .Where(s => age >= s.MinMonths && age <= s.MaxMonths)
             .ToList();
 
-        var words = lowerQuestion
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Where(w => !_stopWords.Contains(w))
-                .ToList();
+        // 2. Question embedding
+        var questionEmbedding = await _embeddingService.GetEmbedding(question);
 
+        // 3. Vector similarity search
         var match = filteredSections
             .Select(s => new
             {
                 Section = s,
-                Score = words.Sum(word =>
-                    GetWordWeight(word) * 
-                    s.Content.ToLower().Split(' ').Count(w => w.Contains(word)))
+                Score = CosineSimilarity(questionEmbedding, s.Embedding)
             })
             .OrderByDescending(x => x.Score)
             .FirstOrDefault();
-        
-        return match != null && match.Score > 0
-            ? match.Section.Content
-            : "Aucune information trouvée";
+
+        return match?.Section.Content ?? "Aucune information trouvée";
     }
-    
+
     private int ExtractAge(string question)
     {
         var match = System.Text.RegularExpressions.Regex.Match(question, @"\d+");
@@ -53,20 +58,17 @@ public class QuestionService : IQuestionService
         return 0;
     }
 
-    private readonly HashSet<string> _stopWords = new()
+    private double CosineSimilarity(float[] v1, float[] v2)
     {
-        "le", "la", "les", "de", "des", "du", "un", "une",
-        "à", "au", "aux", "en", "et", "est", "pour",
-        "que", "qui", "dans", "sur", "avec", "par",
-        "ce", "cet", "cette"
-    };
+        double dot = 0, norm1 = 0, norm2 = 0;
 
-    private int GetWordWeight(string word)
-    {
-        if (word.Length <= 2) return 0;
-        if (word == "biberon" || word == "lait") return 3;
-        if (word == "eau") return 2;
+        for (int i = 0; i < v1.Length; i++)
+        {
+            dot += v1[i] * v2[i];
+            norm1 += v1[i] * v1[i];
+            norm2 += v2[i] * v2[i];
+        }
 
-        return 1;
+        return dot / (Math.Sqrt(norm1) * Math.Sqrt(norm2));
     }
 }

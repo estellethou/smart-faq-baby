@@ -1,8 +1,18 @@
+# Build
 bin/
 obj/
-.vs/
+
+# Rider / IDE
 .idea/
+.vs/
+
+# User files
 *.user
 *.suo
+
+# Logs
 *.log
+
+# Secrets
+appsettings.Development.json
 .env
