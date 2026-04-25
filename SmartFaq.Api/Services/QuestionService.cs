@@ -25,27 +25,53 @@ public class QuestionService : IQuestionService
 
     public async Task<string> GetContext(string question)
     {
-        var age = ExtractAge(question);
+        var lowerQuestion = question.ToLower();
+        var age = ExtractAge(lowerQuestion);
 
         // 1. Filter by metadata (age)
         var filteredSections = _sections
             .Where(s => age >= s.MinMonths && age <= s.MaxMonths)
             .ToList();
+        
+        // 2. Clean + tokenize question
+        var words = lowerQuestion
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => !_stopWords.Contains(w))
+            .ToList();
 
-        // 2. Question embedding
-        var questionEmbedding = await _embeddingService.GetEmbedding(question);
+        // 3. Question embedding
+        var questionEmbedding = await _embeddingService.GetEmbedding(lowerQuestion);
 
-        // 3. Vector similarity search
+        // 4. Hybrid scoring
         var match = filteredSections
-            .Select(s => new
+            .Select(s =>
             {
-                Section = s,
-                Score = CosineSimilarity(questionEmbedding, s.Embedding)
+                var content = s.Content.ToLower();
+
+                //KEYWORD SCORE
+                var keywordScore = words.Sum(word =>
+                    content.Split(' ').Count(w => w.Contains(word)));
+
+                //EMBEDDING SCORE
+                var embeddingScore = CosineSimilarity(questionEmbedding, s.Embedding);
+
+                //HYBRID
+                var finalScore = (keywordScore * 2) + embeddingScore;
+
+                return new
+                {
+                    Section = s,
+                    Score = finalScore,
+                    KeywordScore = keywordScore,
+                    EmbeddingScore = embeddingScore
+                };
             })
             .OrderByDescending(x => x.Score)
             .FirstOrDefault();
 
-        return match?.Section.Content ?? "Aucune information trouvée";
+        return match != null && match.Score > 0
+            ? match.Section.Content
+            : "Aucune information trouvée";
     }
 
     private int ExtractAge(string question)
@@ -57,6 +83,14 @@ public class QuestionService : IQuestionService
 
         return 0;
     }
+    
+    private readonly HashSet<string> _stopWords = new()
+    {
+        "le", "la", "les", "de", "des", "du", "un", "une",
+        "à", "au", "aux", "en", "et", "est", "pour",
+        "que", "qui", "dans", "sur", "avec", "par",
+        "ce", "cet", "cette"
+    };
 
     private double CosineSimilarity(float[] v1, float[] v2)
     {
