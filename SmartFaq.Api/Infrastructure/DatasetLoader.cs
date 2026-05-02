@@ -35,14 +35,17 @@ public class DatasetLoader
 
     private (int min, int max) ParseAge(string title)
     {
-        if (title.Contains("sécurité"))
-            return (0, 36)
-                ;
-        var parts = title.Split('-');
-        
-        var min = int.Parse(parts[0].Trim());
-        var max = int.Parse(parts[1].Split(' ')[0].Trim());
+        // Example: "1-3 mois"
+        var match = System.Text.RegularExpressions.Regex.Match(title, @"(\d+)\s*-\s*(\d+)");
 
-        return (min, max);
+        if (match.Success)
+        {
+            var min = int.Parse(match.Groups[1].Value);
+            var max = int.Parse(match.Groups[2].Value);
+            return (min, max);
+        }
+
+        // Section without age
+        return (0, 99);
     }
 }

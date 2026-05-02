@@ -23,17 +23,21 @@ public class QuestionService : IQuestionService
         }
     }
 
-    public async Task<string> GetContext(string question)
+    public async Task<IEnumerable<string>> GetContext(string question)
     {
         var lowerQuestion = question.ToLower();
         var age = ExtractAge(lowerQuestion);
 
-        // 1. Filter by metadata (age)
+        // 1. Filter by age + evergreen sections
         var filteredSections = _sections
-            .Where(s => age >= s.MinMonths && age <= s.MaxMonths)
+            .Where(s =>
+                (age >= s.MinMonths && age <= s.MaxMonths)
+                || s.Title.Contains("sécurité")
+                || s.Title.Contains("allergies")
+                || s.Title.Contains("hydratation"))
             .ToList();
-        
-        // 2. Clean + tokenize question
+
+        // 2. Keywords
         var words = lowerQuestion
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(w => !_stopWords.Contains(w))
@@ -42,36 +46,35 @@ public class QuestionService : IQuestionService
         // 3. Question embedding
         var questionEmbedding = await _embeddingService.GetEmbedding(lowerQuestion);
 
-        // 4. Hybrid scoring
-        var match = filteredSections
+        // 4. Rank sections
+        var topMatches = filteredSections
             .Select(s =>
             {
                 var content = s.Content.ToLower();
 
-                //KEYWORD SCORE
                 var keywordScore = words.Sum(word =>
                     content.Split(' ').Count(w => w.Contains(word)));
 
-                //EMBEDDING SCORE
                 var embeddingScore = CosineSimilarity(questionEmbedding, s.Embedding);
 
-                //HYBRID
                 var finalScore = (keywordScore * 2) + embeddingScore;
 
                 return new
                 {
                     Section = s,
-                    Score = finalScore,
-                    KeywordScore = keywordScore,
-                    EmbeddingScore = embeddingScore
+                    Score = finalScore
                 };
             })
+            .Where(x => x.Score > 1)
             .OrderByDescending(x => x.Score)
-            .FirstOrDefault();
+            .Take(3)
+            .ToList();
 
-        return match != null && match.Score > 0
-            ? match.Section.Content
-            : "Aucune information trouvée";
+        if (!topMatches.Any())
+            return ["Aucune information trouvée"];
+
+        // 5. Merge contexts
+        return topMatches.Select(x => x.Section.Content);
     }
 
     private int ExtractAge(string question)
